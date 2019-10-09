@@ -13,6 +13,6 @@ If you use our dataset, please cite our work as follows:
 	author={Vo, Nguyen and Lee, Kyumin},
 	booktitle={The 41st International ACM SIGIR Conference 
 		  on Research and Development in Information Retrieval},
-	year={2019}
+	year={2018}
 }
 ```
