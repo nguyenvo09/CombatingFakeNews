@@ -1,4 +1,4 @@
-# CombatingFakeNews
+# Recommending Fact-checking Articles to Combat Fake News
 This is the repository for the paper "The Rise of Guardians: Fact-checking URL Recommendation to Combat Fake News" SIGIR 2018,
 https://arxiv.org/abs/1806.07516 
 
