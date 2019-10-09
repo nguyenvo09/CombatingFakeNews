@@ -1,5 +1,6 @@
 # CombatingFakeNews
-This is the repository for the paper "The Rise of Guardians: Fact-checking URL Recommendation to Combat Fake News"
+This is the repository for the paper "The Rise of Guardians: Fact-checking URL Recommendation to Combat Fake News" SIGIR 2018,
+https://arxiv.org/abs/1806.07516 
 
 - Link to download our full dataset for the paper: 
 https://drive.google.com/file/d/1DQJDMaFJfHo2k6AzEghQXb-xzYbW1Maz/view?usp=sharing 
