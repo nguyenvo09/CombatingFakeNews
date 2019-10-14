@@ -6,7 +6,7 @@ https://arxiv.org/abs/1806.07516
 https://drive.google.com/file/d/1DQJDMaFJfHo2k6AzEghQXb-xzYbW1Maz/view?usp=sharing 
 
 
-If you use our dataset, please cite our work as follows:
+Please cite our paper if you find the data and code helpful, thanks:
 
 ```
 @inproceedings{vo2018guardians,
