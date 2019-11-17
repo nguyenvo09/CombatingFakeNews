@@ -5,17 +5,16 @@ import nets as my_nets
 import losses as my_losses
 import torch_utils as my_utils
 import torch.optim as optim
+from torch.optim.lr_scheduler import StepLR
 import time
 import os
 from handlers import output_handler, sampler
 from Evaluation import evaluator as my_evaluator
 import datetime
 import json
-
-
-class GAU_model(object):
+class MF_model_no_negs(object):
     """
-    Model for GAU
+    Model for MF without negative samples
 
     Parameters
     ----------
@@ -67,9 +66,8 @@ class GAU_model(object):
                  num_negative_samples = 3,
                  trained_net = None,
                  net_type = "mf",
-                 logfolder = None,
-                 full_settings = None):
-        assert loss in ('pointwise', 'bpr', 'hinge', 'adaptive_hinge', "single_pointwise_square_loss")
+                 logfolder = None):
+        assert loss in ('pointwise', 'bpr', 'hinge', 'adaptive_hinge')
         self._loss = loss
         self._embedding_dim = embedding_dim
         self._n_iter = n_iter
@@ -97,11 +95,14 @@ class GAU_model(object):
         if not os.path.exists(logfolder):
             os.mkdir(logfolder)
 
-        curr_date = datetime.datetime.now().timestamp()  # second
+        curr_date = datetime.datetime.now().timestamp() # second
         self.logfile_text = os.path.join(logfolder, "%s_result.txt" % int(curr_date))
         self.saved_model = os.path.join(logfolder, "%s_saved_model" % int(curr_date))
         self.output_handler = output_handler.FileHandler(self.logfile_text)
-        self.output_handler.myprint(json.dumps(full_settings.__dict__, indent=2, sort_keys=True))
+
+        # for re-producing experiments, adopted from spotlight
+        my_utils.set_seed(self._random_state.randint(-10 ** 8, 10 ** 8),
+                             cuda = self._use_cuda)
 
         # for evaluation during training
         self._sampler = sampler.Sampler()
@@ -112,9 +113,11 @@ class GAU_model(object):
 
     def __repr__(self):
         """ Return a string of the model when you want to print"""
+        # todo
         return "Vanilla Matrix Factorization Model"
 
     def _initialized(self):
+
         return self._net is not None
 
     def _initialize(self, interactions):
@@ -128,8 +131,8 @@ class GAU_model(object):
 
         """
         self._n_users, self._n_items = interactions.num_users, interactions.num_items
-        if self._net_type == "gau":
-            self._net = my_nets.GAU(self._n_users, self._n_items, self._embedding_dim)
+        if self._net_type == "mf":
+            self._net = my_nets.MF(self._n_users, self._n_items, self._embedding_dim)
 
         # put the model into cuda if use cuda
         self._net = my_utils.gpu(self._net, self._use_cuda)
@@ -143,35 +146,29 @@ class GAU_model(object):
             self._optimizer = self._optimizer_func(self._net.parameters())
 
         # losses functions
-        if self._loss == 'pointwise':
-            self._loss_func = my_losses.pointwise_loss
-        elif self._loss == "single_pointwise_square_loss":
-            self._loss_func = my_losses.single_pointwise_square_loss
-        elif self._loss == 'bpr':
-            self._loss_func = my_losses.bpr_loss
-        elif self._loss == 'hinge':
-            self._loss_func = my_losses.hinge_loss
-        elif self._loss == 'bce':  # binary cross entropy
-            self._loss_func = my_losses.pointwise_bceloss
-        else:
-            self._loss_func = my_losses.adaptive_hinge_loss
-        print("Using: ", self._loss_func)
+        self._loss_func = my_losses.single_pointwise_square_loss
 
     def _check_input(self, user_ids, item_ids, allow_items_none=False):
 
-        if isinstance(user_ids, int): user_id_max = user_ids
-        else: user_id_max = user_ids.max()
+        if isinstance(user_ids, int):
+            user_id_max = user_ids
+        else:
+            user_id_max = user_ids.max()
 
         if user_id_max >= self._n_users:
             raise ValueError('Maximum user id greater than number of users in model.')
 
-        if allow_items_none and item_ids is None: return
+        if allow_items_none and item_ids is None:
+            return
 
-        if isinstance(item_ids, int): item_id_max = item_ids
-        else: item_id_max = item_ids.max()
+        if isinstance(item_ids, int):
+            item_id_max = item_ids
+        else:
+            item_id_max = item_ids.max()
 
         if item_id_max >= self._n_items:
             raise ValueError('Maximum item id greater than number of items in model.')
+
 
     def fit(self, interactions,
             verbose=True,
@@ -179,13 +176,7 @@ class GAU_model(object):
             vadRatings = None,
             vadNegatives = None,
             testRatings = None,
-            testNegatives = None,
-            adjNetwork = None,
-            user_user_sppmi = None,
-            item_item_sppmi = None,
-            user_user_sim = None,
-            item_item_sim = None,
-            alpha_gau: float = None, gamma_gau: float = None, beta_gau: float = None):
+            testNegatives = None):
         """
         Fit the model.
         Parameters
@@ -220,50 +211,30 @@ class GAU_model(object):
 
 
         for epoch_num in range(self._n_iter):
-            user_ids, item_ids, neg_items_ids = self._sampler.get_train_instances(interactions, self._num_negative_samples, random_state = self._random_state)
+
+            # ------ Move to here ----------------------------------- #
+
+            user_ids = interactions.user_ids.astype(np.int64)  # may not be unique
+            item_ids = interactions.item_ids.astype(np.int64)
+
             self._check_input(user_ids, item_ids)
-            users, items, neg_items = my_utils.shuffle(user_ids, item_ids, neg_items_ids, random_state = self._random_state)
+            users, items = my_utils.shuffle(user_ids, item_ids, random_state = self._random_state)
 
             user_ids_tensor = my_utils.gpu(torch.from_numpy(users), self._use_cuda)
             item_ids_tensor = my_utils.gpu(torch.from_numpy(items), self._use_cuda)
-            neg_item_ids_tensor = my_utils.gpu(torch.from_numpy(neg_items), self._use_cuda)
-
-            self._check_shape(user_ids_tensor, item_ids_tensor, neg_item_ids_tensor, self._num_negative_samples)
 
             epoch_loss = 0.0
             t1 = time.time()
-            visited_users = set()
-            visited_users_sppmi = set()
-            visited_item_sppmi = set()
-            visited_user_sim = set()
-            visited_item_sim = set()
-
             for (minibatch_num,
                  (batch_user,
-                  batch_item,
-                  batch_negatives)) in enumerate(my_utils.minibatch(user_ids_tensor, item_ids_tensor, neg_item_ids_tensor,
-                                                                    batch_size=self._batch_size)):
+                  batch_item)) in enumerate(my_utils.minibatch(user_ids_tensor, item_ids_tensor,
+                                                                batch_size=self._batch_size)):
 
-                # need to duplicate batch_user and batch_item
-                network = self._prepare_network_input(batch_user, visited_users, adjNetwork)
-                user_user_sppmi_selected = self._select_user_user_sppmi_input(batch_user, visited_users_sppmi, user_user_sppmi)
-                item_item_sppmi_selected = self._select_user_user_sppmi_input(batch_item, visited_item_sppmi, item_item_sppmi)
-                user_user_sim_selected = self._select_user_user_sppmi_input(batch_item, visited_user_sim, user_user_sim)
-                item_item_sim_selected = self._select_user_user_sppmi_input(batch_item, visited_item_sim, item_item_sim)
+                positive_prediction = self._net(batch_user, batch_item)
+
                 self._optimizer.zero_grad()
 
-                if self._loss == "bpr":
-                    loss = self._get_multiple_negative_predictions_normal(batch_user, batch_item, batch_negatives,
-                                                                          self._num_negative_samples, network,
-                                                                          user_user_sppmi_selected,
-                                                                          item_item_sppmi_selected)
-                else:
-                    loss = self._get_loss(batch_user, batch_item, network, user_user_sppmi_selected,
-                                          item_item_sppmi_selected,
-                                          user_user_sim_selected,
-                                          item_item_sim_selected,
-                                          alpha_gau, gamma_gau, beta_gau)
-
+                loss = self._loss_func(positive_prediction)
                 epoch_loss += loss.item()
 
                 loss.backward()
@@ -284,11 +255,13 @@ class GAU_model(object):
 
                 t2 = time.time()
                 eval_time = t2 - t1
-                self.output_handler.myprint('|Epoch %d | Train time: %d (s) | Train loss: %.3f | Eval time: %.3f (s) '
+                self.output_handler.myprint('|Epoch %d | Train time: %d | Train loss: %.3f | Eval time: %d '
                       '| Vad hits@%d = %.3f | Vad ndcg@%d = %.3f '
                       '| Test hits@%d = %.3f | Test ndcg@%d = %.3f |'
-                      % (epoch_num, epoch_train_time, epoch_loss, eval_time, topN, hits, topN, ndcg, topN, hits_test, topN, ndcg_test))
+                      % (epoch_num, epoch_train_time, epoch_loss, eval_time, topN, hits, topN, ndcg, topN, hits_test, topN,
+                         ndcg_test))
                 if hits > best_hit or (hits == best_hit and ndcg > best_ndcg):
+                    # if (hits + ndcg) > (best_hit + best_ndcg):
                     with open(self.saved_model, "wb") as f:
                         torch.save(self._net, f)
                     test_results_dict = result_test
@@ -319,153 +292,6 @@ class GAU_model(object):
         negative_prediction = self._net(user_ids, negative_var)
         return negative_prediction
 
-    def _get_multiple_negative_predictions_normal(self, user_ids, item_ids, neg_item_ids, n,
-                                                  network,
-                                                  user_user_sppmi,
-                                                  item_item_sppmi):
-        """
-        We compute prediction for every pair of (user, neg_item). Since shape of user_ids is (batch_size, )
-        and neg_item_ids.shape = (batch_size, n), we need to reshape user_ids a little bit.
-
-        Parameters
-        ----------
-        user_ids: :class:`torch.Tensor`
-            shape (batch_size, )
-        item_ids: :class:`torch.Tensor`
-            shape (batch_size, )
-        neg_item_ids: :class:`torch.Tensor`
-            shape (batch_size, n)
-        n: int
-
-        Returns
-        -------
-
-        """
-        batch_size = user_ids.size(0)
-        assert neg_item_ids.size() == (batch_size, n)
-        # needs to check
-        user_ids_tmp = user_ids.view(batch_size, 1).expand(batch_size, n).reshape(batch_size * n)
-
-        assert user_ids_tmp.size() == (batch_size * n, )
-        batch_negatives_tmp = neg_item_ids.view(batch_size * n)
-
-        negative_prediction = self._net(user_ids_tmp, batch_negatives_tmp)
-        positive_prediction = self._net(user_ids, item_ids) # (batch_size)
-        positive_prediction = positive_prediction.view(batch_size, 1).expand(batch_size, n).reshape(batch_size * n)
-
-        assert positive_prediction.shape == negative_prediction.shape
-        # print(self._loss_func)
-        loss = self._loss_func(positive_prediction, negative_prediction)
-
-        if len(network) != 0:
-            loss += self._net.network_loss(network)
-
-        # network_loss = 0
-        if len(user_user_sppmi) != 0:
-            loss += self._net.user_user_sppmi_loss(user_user_sppmi)
-
-        if len(item_item_sppmi) != 0:
-            loss += self._net.item_item_sppmi_loss(item_item_sppmi)
-
-        return loss
-
-    def _select_user_user_sppmi_input(self, batch_user, done, user_user_sppmi):
-        """
-
-        Parameters
-        ----------
-         batch_user: :class:`torch.Tensor` shape (batch_size, )
-         visited_users: :class:`set`
-            id of visited users for network information
-         adjNetwork: :class:`dict`
-            key: userID `int` and values are adjacent vertices
-
-        Returns
-        -------
-        """
-        # network
-        targets = []
-        T = torch_utils.tensor2numpy(batch_user)
-        for u in T:
-            if u in done: continue
-            done.add(u)
-            targets.append(u)
-        if len(targets) == 0:
-            return []
-        targets = np.array(targets)
-        selected = user_user_sppmi[targets]
-
-        user_indices = torch_utils.numpy2tensor(np.array(targets), dtype = torch.long)
-        selected = torch_utils.numpy2tensor(np.array(selected), dtype = torch.float)
-
-        sppmi = [torch_utils.gpu(user_indices, gpu = True), torch_utils.gpu(selected, True)]
-        return sppmi
-
-    def _prepare_network_input(self, batch_user, visited_users, adjNetwork):
-        """
-
-        Parameters
-        ----------
-         batch_user: :class:`torch.Tensor` shape (batch_size, )
-         visited_users: :class:`set`
-            id of visited users for network information
-         adjNetwork: :class:`dict`
-            key: userID `int` and values are adjacent vertices
-
-        Returns
-        -------
-        """
-        # network
-        targets, labels = [], []
-        T = torch_utils.tensor2numpy(batch_user)
-        for u in T:
-            if u in visited_users: continue
-            visited_users.add(u)
-            neighbors = adjNetwork.get(u, [0] * self._n_users)
-            targets.append(u)
-            labels.append(neighbors)
-        user_indices = torch_utils.numpy2tensor(np.array(targets), dtype = torch.long)
-        labels = torch_utils.numpy2tensor(np.array(labels), dtype = torch.float)
-        network = [torch_utils.gpu(user_indices, gpu = True), torch_utils.gpu(labels, True)]
-        return network
-
-    def _get_loss(self, user_ids, item_ids, network, user_user_sppmi, item_item_sppmi,
-                  user_user_sim, item_item_sim, alpha_gau = None, gamma_gau = None, beta_gau = None):
-        """
-        We compute prediction for every pair of (user, neg_item). Since shape of user_ids is (batch_size, )
-        and neg_item_ids.shape = (batch_size, n), we need to reshape user_ids a little bit.
-
-        Parameters
-        ----------
-        user_ids: :class:`torch.Tensor`
-            shape (batch_size, )
-        item_ids: :class:`torch.Tensor`
-            shape (batch_size, )
-
-        Returns
-        -------
-
-        """
-        batch_size = user_ids.size(0)
-        positive_prediction = self._net(user_ids, item_ids) # (batch_size)
-        loss = self._loss_func(positive_prediction)
-        if len(network) != 0:
-            loss += alpha_gau * self._net.network_loss(network)
-
-        if len(user_user_sppmi) != 0:
-            loss += self._net.user_user_sppmi_loss(user_user_sppmi)
-
-        if len(item_item_sppmi) != 0:
-            loss += self._net.item_item_sppmi_loss(item_item_sppmi)
-
-        if len(user_user_sim) != 0:
-            loss += gamma_gau * self._net.user_user_sim_loss(user_user_sim)
-
-        if len(item_item_sim) != 0:
-            loss += beta_gau * self._net.item_item_sim_loss(item_item_sim)
-
-        return loss
-
     def predict(self, user_ids, item_ids):
         """
         Make predictions: given a sequence of interactions, predict
@@ -492,6 +318,6 @@ class GAU_model(object):
 
         user_ids, item_ids = my_utils._predict_process_ids(user_ids, item_ids, self._n_items, self._use_cuda)
         assert user_ids.shape == item_ids.shape
-        out = self._net.predict(user_ids, item_ids)
+        out = self._net(user_ids, item_ids)
 
         return my_utils.cpu(out).detach().numpy().flatten()
