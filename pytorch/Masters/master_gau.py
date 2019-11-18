@@ -102,6 +102,5 @@ if __name__ == '__main__':
     parser.add_argument('--decay_weight', type = float, default = 0.0001, help = 'percent of decaying')
 
     args = parser.parse_args()
-    args.loss_type = "bpr"
     fit_models(args)
 
