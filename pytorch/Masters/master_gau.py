@@ -11,19 +11,19 @@ from handlers import data_handlers as my_data_handlers
 def fit_models(args):
     train_file = os.path.join(args.path, args.dataset, '%s.train.rating' % args.dataset)
     vad_file = os.path.join(args.path, args.dataset, '%s.dev.rating' % args.dataset)
-    vad_neg_file = os.path.join(args.path, args.dataset, '%s.dev.negative' % args.dataset)
     test_file = os.path.join(args.path, args.dataset, '%s.test.rating' % args.dataset)
-    test_neg_file = os.path.join(args.path, args.dataset, '%s.test.negative' % args.dataset)
 
     network_file = os.path.join(args.path, args.dataset, '%s.adjacency.network' % args.dataset)
     user_user_sppmi_raw_file = os.path.join(args.path, args.dataset, '%s.user_user.frequency.csv' % args.dataset)
     item_item_sppmi_raw_file = os.path.join(args.path, args.dataset, '%s.item_item.frequency.csv' % args.dataset)
     user_user_sim_file = os.path.join(args.path, args.dataset, '%s.user_user_cosine_sim.csv' % args.dataset)
     item_item_sim_file = os.path.join(args.path, args.dataset, '%s.url_url_cosine_sim.csv' % args.dataset)
-    vadRatings = my_data_handlers.load_rating_file_as_list(vad_file)
-    vadNegatives = my_data_handlers.load_negative_file(vadRatings, vad_neg_file)
-    testRatings = my_data_handlers.load_rating_file_as_list(test_file)
-    testNegatives = my_data_handlers.load_negative_file(testRatings, test_neg_file)
+
+    trainRatings = my_data_handlers.load_rating_file_as_dict(train_file)
+    vadRatings = my_data_handlers.load_rating_file_as_dict(vad_file)
+    testRatings = my_data_handlers.load_rating_file_as_dict(test_file)
+    vadNegatives = my_data_handlers.generate_negatives(vadRatings, removed = [trainRatings, testRatings])
+    testNegatives = my_data_handlers.generate_negatives(testRatings, removed = [trainRatings, vadRatings])
 
     rec_model = gau.GAU_model(loss = args.loss_type,  # 'pointwise, bpr, hinge, adaptive_hinge'
                               embedding_dim = args.num_factors,
@@ -102,6 +102,6 @@ if __name__ == '__main__':
     parser.add_argument('--decay_weight', type = float, default = 0.0001, help = 'percent of decaying')
 
     args = parser.parse_args()
-
+    args.loss_type = "bpr"
     fit_models(args)
 

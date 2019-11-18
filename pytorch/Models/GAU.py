@@ -11,6 +11,10 @@ from handlers import output_handler, sampler
 from Evaluation import evaluator as my_evaluator
 import datetime
 import json
+from interactions import Interactions
+import collections
+from typing import Dict, List
+import rank_metrics
 
 
 class GAU_model(object):
@@ -202,22 +206,11 @@ class GAU_model(object):
         """
 
         self._sampler.set_interactions(interactions)
-
-        # user_ids = interactions.user_ids.astype(np.int64)
-        # item_ids = interactions.item_ids.astype(np.int64)
-
         if not self._initialized():
             self._initialize(interactions)
 
-        # self._check_input(user_ids, item_ids)
-
-        best_hit = 0
-        best_ndcg = 0
-        best_epoch = 0
-        test_ndcg = 0
-        test_hit = 0
+        best_map, best_ndcg, best_epoch, test_ndcg, test_map = 0, 0, 0, 0, 0
         test_results_dict = None
-
 
         for epoch_num in range(self._n_iter):
             user_ids, item_ids, neg_items_ids = self._sampler.get_train_instances(interactions, self._num_negative_samples, random_state = self._random_state)
@@ -227,9 +220,7 @@ class GAU_model(object):
             user_ids_tensor = my_utils.gpu(torch.from_numpy(users), self._use_cuda)
             item_ids_tensor = my_utils.gpu(torch.from_numpy(items), self._use_cuda)
             neg_item_ids_tensor = my_utils.gpu(torch.from_numpy(neg_items), self._use_cuda)
-
             self._check_shape(user_ids_tensor, item_ids_tensor, neg_item_ids_tensor, self._num_negative_samples)
-
             epoch_loss = 0.0
             t1 = time.time()
             visited_users = set()
@@ -239,10 +230,8 @@ class GAU_model(object):
             visited_item_sim = set()
 
             for (minibatch_num,
-                 (batch_user,
-                  batch_item,
-                  batch_negatives)) in enumerate(my_utils.minibatch(user_ids_tensor, item_ids_tensor, neg_item_ids_tensor,
-                                                                    batch_size=self._batch_size)):
+                 (batch_user, batch_item, batch_negatives)) in enumerate(my_utils.minibatch(user_ids_tensor, item_ids_tensor, neg_item_ids_tensor,
+                                                                    batch_size = self._batch_size)):
 
                 # need to duplicate batch_user and batch_item
                 network = self._prepare_network_input(batch_user, visited_users, adjNetwork)
@@ -254,55 +243,51 @@ class GAU_model(object):
 
                 if self._loss == "bpr":
                     loss = self._get_multiple_negative_predictions_normal(batch_user, batch_item, batch_negatives,
-                                                                          self._num_negative_samples, network,
-                                                                          user_user_sppmi_selected,
-                                                                          item_item_sppmi_selected)
+                                                                          self._num_negative_samples, network, user_user_sppmi_selected, item_item_sppmi_selected)
                 else:
                     loss = self._get_loss(batch_user, batch_item, network, user_user_sppmi_selected,
-                                          item_item_sppmi_selected,
-                                          user_user_sim_selected,
-                                          item_item_sim_selected,
-                                          alpha_gau, gamma_gau, beta_gau)
+                                          item_item_sppmi_selected, user_user_sim_selected, item_item_sim_selected, alpha_gau, gamma_gau, beta_gau)
 
                 epoch_loss += loss.item()
-
                 loss.backward()
                 self._optimizer.step()
 
             epoch_loss /= minibatch_num + 1
             t2 = time.time()
             epoch_train_time = t2 - t1
-            if verbose: # validation after each epoch
+            if verbose:  # validation after each epoch
                 t1 = time.time()
-                result_val = my_evaluator.evaluate(self, vadRatings, vadNegatives, topN)
-                hits = result_val["hits"]
+                result_val = self.evaluate(vadRatings, vadNegatives, topN)
+                mapks = result_val["map"]
                 ndcg = result_val["ndcg"]
+                recall = result_val["recall"]
 
-                result_test = my_evaluator.evaluate(self, testRatings, testNegatives, topN)
-                hits_test = result_test["hits"]
+                result_test = self.evaluate(testRatings, testNegatives, topN)
+                maps_test = result_test["map"]
                 ndcg_test = result_test["ndcg"]
+                recall_test = result_test["recall"]
 
                 t2 = time.time()
                 eval_time = t2 - t1
-                self.output_handler.myprint('|Epoch %d | Train time: %d (s) | Train loss: %.3f | Eval time: %.3f (s) '
-                      '| Vad hits@%d = %.3f | Vad ndcg@%d = %.3f '
-                      '| Test hits@%d = %.3f | Test ndcg@%d = %.3f |'
-                      % (epoch_num, epoch_train_time, epoch_loss, eval_time, topN, hits, topN, ndcg, topN, hits_test, topN, ndcg_test))
-                if hits > best_hit or (hits == best_hit and ndcg > best_ndcg):
+                self.output_handler.myprint('|Epoch %d | Train time: %d (s) | Train loss: %.5f | Eval time: %.3f (s) '
+                      '| Vad mapks@%d = %.5f | Vad ndcg@%d = %.5f | Vad recall@%d = %.5f '
+                      '| Test mapks@%d = %.5f | Test ndcg@%d = %.5f | Test recall@%d = %.5f'
+                      % (epoch_num, epoch_train_time, epoch_loss, eval_time, topN, mapks, topN, ndcg,
+                         topN, recall, topN, maps_test, topN, ndcg_test, topN, recall_test))
+                if ndcg > best_ndcg:
                     with open(self.saved_model, "wb") as f:
                         torch.save(self._net, f)
                     test_results_dict = result_test
-                    best_hit, best_ndcg, best_epoch = hits, ndcg, epoch_num
-                    test_hit, test_ndcg = hits_test, ndcg_test
+                    best_map, best_ndcg, best_epoch = mapks, ndcg, epoch_num
+                    test_map, test_ndcg = maps_test, ndcg_test
 
             if np.isnan(epoch_loss) or epoch_loss == 0.0:
                 raise ValueError('Degenerate epoch loss: {}'.format(epoch_loss))
 
         self.output_handler.myprint('Best result: '
-              '| vad hits@%d = %.3f | vad ndcg@%d = %.3f '
-              '| test hits@%d = %.3f | test ndcg@%d = %.3f | epoch = %d' % (topN, best_hit, topN, best_ndcg,
-                                                                            topN, test_hit, topN, test_ndcg,
-                                                                            best_epoch))
+              '| vad precisions@%d = %.3f | vad ndcg@%d = %.3f '
+              '| test precisions@%d = %.3f | test ndcg@%d = %.3f | epoch = %d' % (topN, best_map, topN, best_ndcg,
+                                                                            topN, test_map, topN, test_ndcg, best_epoch))
         self.output_handler.myprint_details(json.dumps(test_results_dict, sort_keys = True, indent = 2))
 
     def _check_shape(self, users, items, neg_items, num_negatives):
@@ -322,7 +307,7 @@ class GAU_model(object):
     def _get_multiple_negative_predictions_normal(self, user_ids, item_ids, neg_item_ids, n,
                                                   network,
                                                   user_user_sppmi,
-                                                  item_item_sppmi):
+                                                  item_item_sppmi, **kargs):
         """
         We compute prediction for every pair of (user, neg_item). Since shape of user_ids is (batch_size, )
         and neg_item_ids.shape = (batch_size, n), we need to reshape user_ids a little bit.
@@ -367,6 +352,16 @@ class GAU_model(object):
         if len(item_item_sppmi) != 0:
             loss += self._net.item_item_sppmi_loss(item_item_sppmi)
 
+        if "user_user_sim" in kargs and "item_item_sim" in kargs:
+            user_user_sim = kargs["user_user_sim"]
+            item_item_sim = kargs["item_item_sim"]
+            gamma_gau = kargs["gamma_gau"]
+            beta_gau = kargs["beta_gau"]
+            if len(user_user_sim) != 0:
+                loss += gamma_gau * self._net.user_user_sim_loss(user_user_sim)
+            if len(item_item_sim) != 0:
+                loss += beta_gau * self._net.item_item_sim_loss(item_item_sim)
+
         return loss
 
     def _select_user_user_sppmi_input(self, batch_user, done, user_user_sppmi):
@@ -398,7 +393,7 @@ class GAU_model(object):
         user_indices = torch_utils.numpy2tensor(np.array(targets), dtype = torch.long)
         selected = torch_utils.numpy2tensor(np.array(selected), dtype = torch.float)
 
-        sppmi = [torch_utils.gpu(user_indices, gpu = True), torch_utils.gpu(selected, True)]
+        sppmi = [torch_utils.gpu(user_indices, gpu = self._use_cuda), torch_utils.gpu(selected, self._use_cuda)]
         return sppmi
 
     def _prepare_network_input(self, batch_user, visited_users, adjNetwork):
@@ -495,3 +490,44 @@ class GAU_model(object):
         out = self._net.predict(user_ids, item_ids)
 
         return my_utils.cpu(out).detach().numpy().flatten()
+
+    def evaluate(self, ratings: Dict[int, List[int]], negatives: Dict[int, List[int]], topN: int):
+        """
+        evaluate performance of models
+        :param ratings: key: user, value: list of positive items
+        :param negatives: key: user, value: list of negative items
+        :param topN: int
+        :return:
+        """
+        ndcgs, apks, recalls = [], [], []
+        for user in sorted(ratings.keys()):
+            pos_items = ratings[user]
+            neg_items = negatives[user]
+            assert type(pos_items) == list and type(neg_items) == list
+
+            items = neg_items + pos_items
+            users = np.full(len(items), user, dtype=np.int64)
+            items = np.asarray(items)
+            predictions = self.predict(users, items)
+            labels = [0.0] * len(neg_items) + [1.0] * len(pos_items)
+            labels = np.array(labels)
+            # compute metric here
+
+            indices = np.argsort(-predictions)[:topN]  # indices of items with highest scores
+            ranklist = labels[indices]
+            ndcg = rank_metrics.ndcg_at_k(ranklist, topN)
+            _, recall = rank_metrics._compute_precision_recall(ranklist, topN)
+            apk = rank_metrics.average_precision(ranklist[:topN])
+            ndcgs.append(ndcg)
+            apks.append(apk)
+            recalls.append(recall)
+
+        results = {}
+        results["ndcg"] = np.nanmean(ndcgs)
+        results["ndcg_list"] = ndcgs
+        results["map"] = np.nanmean(apks)
+        results["maps_list"] = apks
+        results["recall"] = np.nanmean(recalls)
+        results["recalls_list"] = recalls
+
+        return results

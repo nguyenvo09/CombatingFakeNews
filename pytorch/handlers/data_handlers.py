@@ -4,10 +4,11 @@ from tqdm import tqdm
 import pandas as pd
 from scipy import sparse
 import torch_utils
+from typing import List, Dict
 
 
 # reuse from neural collaborative filtering
-def load_rating_file_as_list(filename):
+def load_rating_file_as_list(filename) -> List[List[int]]:
     ratingList = []
     with open(filename, "r") as f:
         line = f.readline()
@@ -19,8 +20,33 @@ def load_rating_file_as_list(filename):
     return ratingList
 
 
+def load_rating_file_as_dict(filename):
+    users = collections.defaultdict(list)
+    fin = open(filename, "r")
+    for line in fin:
+        arr = line.split("\t")
+        user, item = int(arr[0]), int(arr[1])
+        users[user].append(item)
+    return users
+
+
+def generate_negatives(ratings, removed: List, n_items: int = 4834):
+    part1, part2 = removed
+    negatives = collections.defaultdict(list)
+    all_negs = set(list(range(n_items)))
+    for user, positive_items in ratings.items():
+        positives = set(positive_items)
+        a = set(part1[user])
+        b = set(part2[user])
+        negs = all_negs - (positives | a | b)
+        negs = sorted(list(negs))
+        assert len(negs) < n_items
+        negatives[user] = negs
+    return negatives
+
+
 # reuse from neural collaborative filtering
-def load_negative_file(ratings, filename):
+def load_negative_file(ratings, filename) -> List[List[int]]:
     """
     We need to make sure the consistency of negative samples per interaction.
     Parameters
