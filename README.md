@@ -14,9 +14,9 @@ one interaction.
 
 ## Analysis
 - Temporal behavior of guardians
-![alt text](https://github.com/nguyenvo09/CombatingFakeNews/blob/master/images/temporal.png)
+![alt text](https://github.com/nguyenvo09/CombatingFakeNews/blob/master/pytorch/images/temporal.png)
 - Topical interests of guardians
-![alt text](https://github.com/nguyenvo09/CombatingFakeNews/blob/master/images/topics.png)
+![alt text](https://github.com/nguyenvo09/CombatingFakeNews/blob/master/pytorch/images/topics.png)
 
 ## How to run this code?
 - Download the splitted data and extract it. The expected path is `/pytorch/Splitted_data/sigir18/*`
