@@ -10,7 +10,7 @@ https://drive.google.com/file/d/1DQJDMaFJfHo2k6AzEghQXb-xzYbW1Maz/view?usp=shari
 https://drive.google.com/open?id=1riEsUNP3GHfn7XefuMkH50kW4W2dL0qW
 
 - The splitted data has training, dev and testing interactions. In each part, there are 12,197 guardians with at least
-one interaction.
+one interaction for each guardian
 
 ## Analysis
 - Temporal behavior of guardians
