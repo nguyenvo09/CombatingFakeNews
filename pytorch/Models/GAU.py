@@ -8,7 +8,6 @@ import torch.optim as optim
 import time
 import os
 from handlers import output_handler, sampler
-from Evaluation import evaluator as my_evaluator
 import datetime
 import json
 from interactions import Interactions
