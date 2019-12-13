@@ -94,7 +94,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default = 0.001, type = float, help = 'Learning rate')
     parser.add_argument('--log', default = "../logs/GAU_log", type = str, help = 'folder for logs and saved models')
     parser.add_argument('--optimizer', nargs = '?', default = 'adam', help = 'Specify an optimizer: adagrad, adam, rmsprop, sgd')
-    parser.add_argument('--loss_type', nargs = '?', default = 'single_pointwise_square_loss', help = 'Specify a loss function: bce, pointwise, bpr, hinge, adaptive_hinge, single_pointwise_square_loss')
+    parser.add_argument('--loss_type', nargs = '?', default = 'single_pointwise_square_loss')
     parser.add_argument('--model', default = 'gau', help = 'Selecting the model type [gau]', type = str)
     parser.add_argument('--topk', type = int, default = 10, help = 'top K')
     parser.add_argument('--cuda', type = int, default = 1, help = 'using cuda or not')

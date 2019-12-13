@@ -146,18 +146,7 @@ class GAU_model(object):
             self._optimizer = self._optimizer_func(self._net.parameters())
 
         # losses functions
-        if self._loss == 'pointwise':
-            self._loss_func = my_losses.pointwise_loss
-        elif self._loss == "single_pointwise_square_loss":
-            self._loss_func = my_losses.single_pointwise_square_loss
-        elif self._loss == 'bpr':
-            self._loss_func = my_losses.bpr_loss
-        elif self._loss == 'hinge':
-            self._loss_func = my_losses.hinge_loss
-        elif self._loss == 'bce':  # binary cross entropy
-            self._loss_func = my_losses.pointwise_bceloss
-        else:
-            self._loss_func = my_losses.adaptive_hinge_loss
+        self._loss_func = my_losses.single_pointwise_square_loss
         print("Using: ", self._loss_func)
 
     def _check_input(self, user_ids, item_ids, allow_items_none=False):
@@ -239,13 +228,8 @@ class GAU_model(object):
                 user_user_sim_selected = self._select_user_user_sppmi_input(batch_item, visited_user_sim, user_user_sim)
                 item_item_sim_selected = self._select_user_user_sppmi_input(batch_item, visited_item_sim, item_item_sim)
                 self._optimizer.zero_grad()
-
-                if self._loss == "bpr":
-                    loss = self._get_multiple_negative_predictions_normal(batch_user, batch_item, batch_negatives,
-                                                                          self._num_negative_samples, network, user_user_sppmi_selected, item_item_sppmi_selected)
-                else:
-                    loss = self._get_loss(batch_user, batch_item, network, user_user_sppmi_selected,
-                                          item_item_sppmi_selected, user_user_sim_selected, item_item_sim_selected, alpha_gau, gamma_gau, beta_gau)
+                loss = self._get_loss(batch_user, batch_item, network, user_user_sppmi_selected,
+                                      item_item_sppmi_selected, user_user_sim_selected, item_item_sim_selected, alpha_gau, gamma_gau, beta_gau)
 
                 epoch_loss += loss.item()
                 loss.backward()
